@@ -11,6 +11,7 @@
 .1st (Read Me file)
 .ans (ANSI text file)
 .apt
+.one (Microsoft OneNote)
 .csv (Comma Separated Value)
 .docm (Word Open XML macro-enabled document)
 .dot (Microsoft Word template)
