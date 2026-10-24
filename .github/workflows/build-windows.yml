@@ -1,0 +1,62 @@
+name: build-windows
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt -e .
+
+      - name: Run tests
+        run: python -m pytest -q -rs
+
+      - name: Build single-file exe
+        run: python -m PyInstaller --clean --noconfirm file-organizer.spec
+
+      - name: Smoke test the exe
+        shell: pwsh
+        run: |
+          & dist\file-organizer.exe --version
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          & dist\file-organizer.exe --help | Select-Object -First 5
+          Get-FileHash dist\file-organizer.exe -Algorithm SHA256 | Format-List
+
+      - name: Headless run of the exe on a synthetic E01, with E01 export
+        shell: pwsh
+        run: |
+          python tests\make_fixture.py fixture
+          & dist\file-organizer.exe --no-gui --source fixture/source.E01 --output fixture\sorted --images --videos --export-e01 fixture\sorted.E01
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Get-ChildItem -Recurse fixture\sorted | Select-Object FullName, Length
+          Get-FileHash fixture\sorted.E01 -Algorithm SHA256 | Format-List
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: file-organizer-windows
+          path: dist/file-organizer.exe
+          if-no-files-found: error
+
+      - name: Release on tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/file-organizer.exe
+          generate_release_notes: true

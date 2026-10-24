@@ -68,7 +68,8 @@
 .otp (OpenDocument Presentation Template)
 .key (Apple Keynote)
 .pez (Prezi presentation)
-Raster Images:
+
+# Raster Images:
 .jpg , .jpeg (JPEG Image)
 .png (Portable Network Graphic)
 .gif (Graphics Interchange Format)
@@ -89,7 +90,8 @@ Raster Images:
 .raw (Camera Raw Image, varies by manufacturer, e.g., .CR2, .NEF, .ARW)
 .avif (AV1 Image File Format)
 .jxl (JPEG XL image)
-Vector Graphics:
+
+# Vector Graphics:
 .svg (Scalable Vector Graphics)
 .eps (Encapsulated PostScript)
 .ai (Adobe Illustrator)

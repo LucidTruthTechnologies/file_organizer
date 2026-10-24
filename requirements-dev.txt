@@ -1,0 +1,5 @@
+# requirements-dev.txt for file-organizer
+# Generated: 2026-10-24
+-r requirements.txt
+pytest==8.4.2
+pyinstaller==6.16.0

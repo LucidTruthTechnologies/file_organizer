@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "file-organizer"
+version = "1.0.0"
+description = "Copy files out of folders or an E01, sorted by extension, with an optional E01 export"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Lucid Truth Technologies" }]
+dependencies = [
+    "libewf-python==20260924",
+    "pytsk3==20260715",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==8.4.2", "pyinstaller==6.16.0"]
+
+[project.scripts]
+file-organizer = "file_organizer.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+file_organizer = ["file-extensions.txt", "icon.ico"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

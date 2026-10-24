@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- file-organizer icon, simplified for 16 and 24 px: a folder holding three sorted bands. LTT palette. -->
+  <rect x="8" y="8" width="240" height="240" rx="44" fill="#182e54"/>
+  <path d="M28 64 Q28 48 44 48 L100 48 L120 70 L212 70 Q228 70 228 86 L228 196 Q228 212 212 212 L44 212 Q28 212 28 196 Z" fill="#dbdee9"/>
+  <rect x="52" y="96" width="152" height="26" rx="6" fill="#a6a5a4"/>
+  <rect x="52" y="132" width="152" height="26" rx="6" fill="#6c7fb7"/>
+  <rect x="52" y="168" width="152" height="26" rx="6" fill="#2f4b9c"/>
+</svg>
