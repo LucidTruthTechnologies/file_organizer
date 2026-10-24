@@ -7,7 +7,8 @@
 #     .\build.ps1 -SkipTests      build without running pytest first
 #     .\build.ps1 -Help
 #
-# Needs: Python 3.11+ on PATH, internet access once to fetch wheels.
+# Needs: Python 3.11+ and Git on PATH, internet access once to fetch wheels
+#        and evidence-io (from GitHub).
 # Produces: dist\file-organizer.exe (single file).
 
 param(

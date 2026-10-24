@@ -45,6 +45,9 @@ jobs:
           python tests\make_fixture.py fixture
           & dist\file-organizer.exe --no-gui --source fixture/source.E01 --output fixture\sorted --images --videos --export-e01 fixture\sorted.E01
           if ($LASTEXITCODE -ne 0) { exit 1 }
+          & dist\file-organizer.exe --no-gui --source fixture/source.E01 --output fixture\sorted-x --videos --export-e01 fixture\sorted-x.E01 --filesystem exfat
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          (Get-Content -Raw fixture\sorted-x\run.json | ConvertFrom-Json).export | Format-List
           Get-ChildItem -Recurse fixture\sorted | Select-Object FullName, Length
           Get-FileHash fixture\sorted.E01 -Algorithm SHA256 | Format-List
 

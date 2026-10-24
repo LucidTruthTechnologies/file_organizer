@@ -1,9 +1,11 @@
-"""Which extensions a run collects.
+"""Which files a run collects.
 
 Two sources: an extension list file (the bundled file-extensions.txt by
 default, or the user's own), or the built-in image and video sets selected
 by --images and --videos. The switches replace the list; given together they
-collect the union of both sets.
+collect the union of both sets. With --videos, a renamed video is also found
+by its container signature. The sets come from evidence-io, so every LTT
+tool agrees on what an image or a video is.
 """
 
 from __future__ import annotations
@@ -11,28 +13,14 @@ from __future__ import annotations
 import os
 from typing import Optional, Set
 
+from evidence_io import filetypes
+
+from .sources import Selector
+
 BUNDLED_LIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "file-extensions.txt")
 
-# Still images: camera, phone, editor and vector formats. Camera raw is listed
-# by vendor extension because nobody saves a file as ".raw" alone.
-IMAGE_EXTENSIONS: Set[str] = {
-    ".jpg", ".jpeg", ".jpe", ".jfif", ".png", ".gif", ".bmp", ".dib", ".tif", ".tiff",
-    ".webp", ".ico", ".heic", ".heif", ".avif", ".jxl", ".jp2", ".j2k", ".psd", ".xcf",
-    ".pdn", ".kra", ".ora", ".svg", ".eps", ".ai", ".cdr", ".wmf", ".emf", ".tga", ".pcx",
-    ".raw", ".dng", ".cr2", ".cr3", ".crw", ".nef", ".nrw", ".arw", ".srf", ".sr2",
-    ".orf", ".rw2", ".raf", ".pef", ".srw", ".x3f", ".3fr", ".erf", ".kdc", ".mrw",
-}
-
-# Video containers (same set as video-frame-triage). Audio-only containers are
-# not here; ogg and asf can hold video, so they stay.
-VIDEO_EXTENSIONS: Set[str] = {
-    "." + e for e in (
-        "mp4", "m4v", "mov", "qt", "3gp", "3g2", "avi", "mkv", "webm", "wmv", "asf",
-        "flv", "f4v", "mpg", "mpeg", "mpe", "m2v", "mpv", "vob", "ts", "mts", "m2ts",
-        "mxf", "dv", "ogv", "ogg", "rm", "rmvb", "divx", "xvid", "h264", "264", "hevc",
-        "265", "mjpeg", "mjpg", "swf", "amv", "dav", "mod", "tod", "evo", "trp", "tp",
-    )
-}
+IMAGE_EXTENSIONS: Set[str] = {"." + e for e in filetypes.IMAGE_EXTENSIONS}
+VIDEO_EXTENSIONS: Set[str] = {"." + e for e in filetypes.VIDEO_EXTENSIONS}
 
 
 def load_extension_list(path: str) -> Set[str]:
@@ -73,3 +61,10 @@ def select_extensions(images: bool, videos: bool, list_path: Optional[str] = Non
         return chosen, "built-in " + " and ".join(names) + " set"
     path = list_path or BUNDLED_LIST
     return load_extension_list(path), f"extension list {path}"
+
+
+def make_selector(images: bool, videos: bool, list_path: Optional[str] = None) -> tuple[Selector, str]:
+    exts, origin = select_extensions(images, videos, list_path)
+    if videos:
+        origin += ", plus renamed videos found by container signature"
+    return Selector(exts, sniff_videos=videos), origin

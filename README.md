@@ -15,10 +15,10 @@ This utility was inspired by `sorter`, written by Brian Carrier as part of [The 
 - Every filesystem in the image is searched (each partition, or a bare volume), and deleted files whose name entry survives can be included
 - Files are copied into `Extension-.jpg`, `Extension-.mp4` and similar folders; originals are never moved or modified (on a live folder, reading a file may update its last-accessed time if Windows tracks it)
 - Same-named files never overwrite each other: the second `beach.jpg` becomes `beach (2).jpg`
-- `manifest.csv` maps every copy back to its source path, with size, SHA-256, and the original modified and accessed times in UTC
+- `manifest.csv` maps every copy back to its source path, with size, MD5, SHA-1 and SHA-256, and the original times in UTC; `run.json` records the run
 - The modified and accessed times recorded before each file is read are set on its copy
 - `--images` and `--videos` collect only images, only videos, or both together
-- Optional E01 export of the sorted result, with examiner, case, evidence and notes in the E01 header
+- Optional E01 export of the sorted result, as FAT32 or, for very large files or folders, exFAT, with examiner, case, evidence and notes in the E01 header
 - A log of every action, `file_organization_log.txt`, in the output folder
 
 ## Download and run (Windows)
@@ -30,7 +30,7 @@ Double-click it, or run it with no arguments, and the window opens:
 1. **Sources**: click **Add folder...** or **Add E01...** (pick any segment of the set). Add as many as you need.
 2. **Output folder**: click **Browse...** and pick or create the folder that receives the sorted copies.
 3. **What to collect**: leave both boxes clear to use the extension list, tick **Images only** or **Videos only**, or tick both for images and videos.
-4. **Export (optional)**: tick **Also write an E01**, choose where with **Save as...**, and fill in the header fields.
+4. **Export (optional)**: tick **Also write an E01**, choose where with **Save as...**, fill in the header fields, and leave **Filesystem** on `auto` unless you need a particular one.
 5. Click **Run**. Progress and the log appear in the window; **Cancel** stops after the current file.
 
 ## Command line
@@ -49,6 +49,7 @@ file-organizer --source PATH [--source PATH ...] --output DIR [options]
 | `--extensions FILE` | Use your own extension list instead of the bundled one. Ignored with `--images` or `--videos`. |
 | `--include-deleted` | E01 sources: also copy deleted files whose name entry survives. |
 | `--export-e01 PATH` | Also write the sorted files into a new E01 at `PATH`. |
+| `--filesystem auto\|fat32\|exfat` | Volume inside the export E01. `auto` (the default) uses FAT32 unless a file is 4 GiB or larger or a folder holds more than FAT32 can, then exFAT. |
 | `--examiner`, `--case`, `--evidence`, `--notes` | E01 header values for the export. |
 | `--segment-size-mib N` | E01 segment size, default 2048. |
 | `--overwrite` | Replace an existing export E01. |
@@ -77,7 +78,7 @@ With neither switch, the run collects every extension in the extension list. The
 
 Lines starting with `#` are headers, text in parentheses is a comment, several extensions may share a line, and the leading dot is optional.
 
-`--images` and `--videos` replace the list with built-in sets. The image set covers common photo, phone, editor and vector formats plus camera raw (`.cr2`, `.nef`, `.arw`, `.dng` and others). The video set is the same one `video-frame-triage` uses (`.mp4`, `.mov`, `.avi`, `.mkv`, `.wmv`, `.3gp`, `.ts` and others). Matching is by extension, without regard to case.
+`--images` and `--videos` replace the list with built-in sets. The image set covers common photo, phone, editor and vector formats plus camera raw (`.cr2`, `.nef`, `.arw`, `.dng` and others). The video set is the same one `video-frame-triage` uses (`.mp4`, `.mov`, `.avi`, `.mkv`, `.wmv`, `.3gp`, `.ts` and others). Matching is by extension, without regard to case. With `--videos`, a video that was renamed to hide it (`holiday.dat`) is also found by its container signature; its manifest row says `matched_by` is `magic`. Both sets come from the shared `evidence-io` library, so every LTT tool agrees on what counts as an image or a video.
 
 ## Output
 
@@ -87,10 +88,14 @@ Lines starting with `#` are headers, text in parentheses is a comment, several e
   Extension-.jpg/beach (2).jpg
   Extension-.mp4/holiday.mp4
   manifest.csv
+  run.json
+  run-of-manifest.json
   file_organization_log.txt
 ```
 
-`manifest.csv` has one row per file found: the output path, status (`copied`, `copied-partial`, `failed`, `skipped`), whether it came from a folder or an E01, the source, the path inside the source (E01 paths start with the partition, such as `p2/Users/alice/...`), whether it was allocated or deleted, the size, bytes copied, SHA-256, and the original modified and accessed times in UTC. Running again into the same output folder adds to it without replacing anything; the new run's manifest is named `manifest-<date>-<time>.csv`. If a run stops on an error, the manifest still records every file copied before it stopped.
+`manifest.csv` has one row per file found. Its columns, in order: `output_path`, `status` (`copied`, `copied-partial`, `failed`, `skipped`), `source_kind` (`folder` or `e01`), `source`, `path_in_source` (E01 paths start with the partition, such as `p2/Users/alice/...`), `allocated` (false for a deleted file), `size_bytes`, `bytes_copied`, `sha256`, `modified_utc`, `accessed_utc`, `in_e01`, `note`, `md5`, `sha1`, `created_utc`, `changed_utc`, `fs_type` (the source filesystem, for E01 sources) and `matched_by`. Times are the originals, in UTC; a time the source does not keep is empty. New columns are only ever added at the end; `run.json` carries `manifest_version` so a reader can tell layouts apart.
+
+`run.json` describes the run: tool and library versions, every source (for an E01: its segments, stored hashes, header values and partitions), the options, the counts, and the export with the filesystem used and why. It names the run's manifest. Running again into the same output folder adds to it without replacing anything: the new run's manifest is named `manifest-<date>-<time>.csv`, `run.json` describes the latest run, and every run's record stays as `run-of-<manifest name>.json`. If a run stops on an error, the manifest still records every file copied before it stopped.
 
 File names come from evidence, so a manifest cell that begins with `=`, `+`, `-` or `@` gets a leading apostrophe. That stops spreadsheet programs from running it as a formula. Remove the apostrophe to recover the exact name.
 
@@ -100,12 +105,15 @@ A deleted file whose metadata has since been reused by another file is listed as
 
 ## E01 export
 
-The export writes the sorted folder, the manifest and the log into a FAT32 volume and wraps that volume in an EnCase 6 E01 (deflate compressed, MD5 of the media stored in the image; the run also logs its SHA-256). Tools that read E01, such as Oxygen Forensic Detective, FTK Imager, Autopsy or The Sleuth Kit, can open it. The export is verified in testing with `ewfverify` and with The Sleuth Kit.
+The export writes the sorted files into a FAT32 or exFAT volume and wraps that volume in an EnCase 6 E01 (deflate compressed, MD5 of the media stored in the image; the run also logs its SHA-256). The volume root holds exactly one `manifest.csv` and one `run.json` for this run, plus the log. Tools that read E01, such as Oxygen Forensic Detective, FTK Imager, Autopsy or The Sleuth Kit, can open it.
+
+Choosing the filesystem: FAT32 is the default because every reader handles it, but it cannot hold a file of 4 GiB or more, nor a folder of more than 65,536 directory entries (a few tens of thousands of files, since long names take several entries each). With `--filesystem auto` the export switches to exFAT when either limit would be crossed, and `run.json` and the log say which was used and why. `--filesystem exfat` always uses exFAT. `--filesystem fat32` forces FAT32: a file of 4 GiB or more is still copied to the output folder but left out of the E01 (`in_e01` is `no`), and a folder over the limit stops the export.
+
+The volume writers come from the shared `evidence-io` library. Each release there is checked by The Sleuth Kit, by `ewfverify`, and by mounting both volume types on Windows with Windows' own drivers and running `chkdsk`.
 
 Things to know:
 
-- FAT32 cannot hold a file of 4 GiB or more. Such a file is still copied to the output folder but left out of the E01, and its manifest row says so (`in_e01` is `no`).
-- FAT32 stores times as local wall-clock time with no time zone. The times inside the E01 are the original modified times in the exporting machine's time zone; `manifest.csv` holds the authoritative UTC times.
+- Times on the files inside the E01 are extraction-time copies of the originals: FAT32 stores local wall-clock time with no zone, exFAT stores UTC. `manifest.csv` holds the authoritative original times, in UTC.
 - The volume is built beside the export before it is compressed, so allow free space for about twice the size of the sorted files.
 - The export must go outside the output folder and outside every source folder, so it never lands in the evidence or among the copies.
 - If the export fails or is canceled, the manifest's `in_e01` column says `export not written`.
@@ -124,4 +132,4 @@ The application icon is `src/file_organizer/icon.ico`, drawn from `assets/icon.s
 
 To run from source on any platform: `pip install -e .`, then `file-organizer` or `python -m file_organizer`.
 
-The E01 writer and the FAT32 builder are pure Python, shared with `video-frame-triage`, because the `libewf-python` wheel cannot write E01 files.
+E01 reading, the image walker, hashing, file-type detection and the E01, FAT32 and exFAT writers live in [evidence-io](https://github.com/LucidTruthTechnologies/evidence-io), shared with `video-frame-triage` and pinned to a release tag in `pyproject.toml` and `requirements.txt`.

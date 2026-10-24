@@ -4,12 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "file-organizer"
-version = "1.0.0"
+version = "1.1.0"
 description = "Copy files out of folders or an E01, sorted by extension, with an optional E01 export"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "Lucid Truth Technologies" }]
 dependencies = [
+    "evidence-io @ git+https://github.com/LucidTruthTechnologies/evidence-io@v1.0.0",
     "libewf-python==20260924",
     "pytsk3==20260715",
 ]

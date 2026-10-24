@@ -8,8 +8,8 @@ import os
 import shutil
 import subprocess
 
-from file_organizer.ewf_writer import EwfMetadata, write_file_as_e01
-from file_organizer.fat32 import Fat32Builder
+from evidence_io.ewf_writer import EwfMetadata, write_file_as_e01
+from evidence_io.fat32 import Fat32Builder
 
 # {path in the source: bytes}. Two different beach.jpg files exercise the
 # no-overwrite rule; the upper-case .MOV exercises case folding.

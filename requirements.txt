@@ -1,9 +1,13 @@
 # requirements.txt for file-organizer
 # Generated: 2026-10-24
-# Both packages ship win_amd64 wheels (same pins as video-frame-triage).
+# libewf-python and pytsk3 ship win_amd64 wheels (same pins as video-frame-triage).
+
+# Shared E01 reader and writer, FAT32 and exFAT builders, image walker and
+# file-type detection, used by every LTT triage tool.
+evidence-io @ git+https://github.com/LucidTruthTechnologies/evidence-io@v1.0.0
 
 # E01 reading (libewf). The wheel is built without zlib, so it cannot WRITE;
-# the E01 writer in this package is pure Python for that reason.
+# evidence-io's E01 writer is pure Python for that reason.
 libewf-python==20260924
 
 # Filesystem walking inside the image (The Sleuth Kit).

@@ -87,6 +87,13 @@ class App:
         self.export_entry.grid(row=0, column=1, sticky="ew", **pad)
         self.export_btn = ttk.Button(exp, text="Save as...", command=self.pick_export)
         self.export_btn.grid(row=0, column=2, **pad)
+        self.fs_var = tk.StringVar(value="auto")
+        ttk.Label(exp, text="Filesystem").grid(row=5, column=0, sticky="w", **pad)
+        self.fs_box = ttk.Combobox(exp, textvariable=self.fs_var, values=["auto", "fat32", "exfat"],
+                                   width=8, state="readonly")
+        self.fs_box.grid(row=5, column=1, sticky="w", **pad)
+        ttk.Label(exp, text="auto: FAT32, or exFAT for files of 4 GiB+ or very large folders").grid(
+            row=6, column=1, sticky="w", **pad)
         self.examiner = tk.StringVar(value="")
         self.case = tk.StringVar(value="")
         self.evidence = tk.StringVar(value="")
@@ -135,6 +142,7 @@ class App:
         exp_state = "normal" if self.export.get() else "disabled"
         for w in [self.export_entry, self.export_btn] + self.meta_entries:
             w.configure(state=exp_state)
+        self.fs_box.configure(state="readonly" if self.export.get() else "disabled")
 
     def on_close(self) -> None:
         if self.worker is not None and self.worker.is_alive():
@@ -199,6 +207,7 @@ class App:
             extensions_file=None if ext_file in ("", BUNDLED_LIST) else ext_file,
             include_deleted=self.deleted.get(),
             export_e01=self.export_var.get().strip() if self.export.get() else None,
+            filesystem=self.fs_var.get(),
             examiner=self.examiner.get(), case_number=self.case.get(),
             evidence_number=self.evidence.get(), notes=self.notes.get(),
         )
@@ -275,9 +284,9 @@ class App:
         text = (f"Files found: {s.files_found}\nCopied: {s.files_copied}\nFailed: {s.files_failed}\n"
                 f"Skipped: {s.files_skipped}\n\nManifest: {s.manifest}")
         if s.e01_segments:
-            text += f"\n\nE01: {', '.join(s.e01_segments)}\nMD5: {s.e01_md5}"
+            text += f"\n\nE01: {', '.join(s.e01_segments)}\nMD5: {s.e01_md5}\nFilesystem: {s.filesystem} ({s.filesystem_reason})"
             if s.e01_excluded:
-                text += f"\n{s.e01_excluded} file(s) of 4 GiB or more left out of the E01 (see manifest)"
+                text += f"\n{s.e01_excluded} file(s) of 4 GiB or more left out of the FAT32 E01 (see manifest)"
         messagebox.showinfo("Done", text)
 
     def _reset(self) -> None:

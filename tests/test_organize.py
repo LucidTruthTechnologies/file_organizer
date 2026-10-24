@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import json
 import os
 
 import pytest
@@ -9,7 +10,7 @@ import pytsk3
 from fixture_lib import FILES, IMAGES, VIDEOS, write_tree
 
 from file_organizer import cli, pipeline
-from file_organizer.ewf_reader import open_e01
+from evidence_io.ewf_reader import open_e01
 from file_organizer.extensions import (BUNDLED_LIST, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, load_extension_list,
                                        select_extensions)
 from file_organizer.pipeline import Options, run, safe_name
@@ -200,16 +201,66 @@ def test_export_e01_reads_back_identical(source_e01, tmp_path):
             f = fs.open("/" + rel)
             assert hashlib.sha256(f.read_random(0, f.info.meta.size)).hexdigest() == sha
         names = {e.info.name.name.decode() for e in fs.open_dir("/")}
-        assert {"manifest.csv", pipeline.LOG_NAME} <= names
+        assert {"manifest.csv", "run.json", pipeline.LOG_NAME} <= names
         assert info.header_values.get("examiner_name") == "pytest"
+        assert s.filesystem == "fat32" and "fits" in s.filesystem_reason
     finally:
         img.close()
 
 
-def test_export_leaves_out_files_fat32_cannot_hold(source_e01, tmp_path, monkeypatch):
+def test_auto_export_switches_to_exfat_and_keeps_every_file(source_e01, tmp_path, monkeypatch):
+    import evidence_io.volume
+
+    monkeypatch.setattr(evidence_io.volume, "MAX_FILE_BYTES", 1000)  # stands in for 4 GiB
+    export = tmp_path / "big.E01"
+    s = run(Options(sources=[source_e01], output_dir=str(tmp_path / "out"), images=True, videos=True,
+                    export_e01=str(export)))
+    assert s.filesystem == "exfat" and s.e01_excluded == 0
+    rows = _manifest(s)
+    assert all(r["in_e01"] == "yes" for r in rows)
+    img, _info = open_e01(str(export))
+    try:
+        fs = pytsk3.FS_Info(img, offset=2048 * 512)
+        for r in rows:
+            f = fs.open("/" + r["output_path"])
+            assert hashlib.sha256(f.read_random(0, f.info.meta.size)).hexdigest() == r["sha256"]
+        run_json = fs.open("/run.json")
+        meta = json.loads(run_json.read_random(0, run_json.info.meta.size))
+        assert meta["manifest_version"] == 1 and meta["export"]["filesystem"] == "exfat"
+    finally:
+        img.close()
+
+
+def test_manifest_carries_three_hashes_and_source_times(source_e01, tmp_path):
+    s = run(Options(sources=[source_e01], output_dir=str(tmp_path / "out"), images=True))
+    for r in _manifest(s):
+        dest = os.path.join(str(tmp_path / "out"), *r["output_path"].split("/"))
+        data = open(dest, "rb").read()
+        assert (r["md5"], r["sha1"], r["sha256"]) == (hashlib.md5(data).hexdigest(),
+                                                       hashlib.sha1(data).hexdigest(),
+                                                       hashlib.sha256(data).hexdigest())
+        assert r["fs_type"] == "fat32" and r["matched_by"] == "extension"
+    meta = json.load(open(s.run_file, encoding="utf-8"))
+    assert meta["manifest"] == os.path.basename(s.manifest) and meta["inputs"][0]["kind"] == "e01"
+    assert meta["inputs"][0]["partitions"][0]["fs_type"] == "fat32"
+
+
+def test_videos_switch_finds_renamed_video_by_signature(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "renamed.dat").write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 40000)
+    (tmp_path / "src" / "notes.dat").write_bytes(b"plain" * 10000)
+    s = run(Options(sources=[str(tmp_path / "src")], output_dir=str(tmp_path / "out"), videos=True))
+    rows = _manifest(s)
+    assert [r["matched_by"] for r in rows] == ["magic"]
+    assert rows[0]["path_in_source"].endswith("renamed.dat")
+
+
+def test_forced_fat32_export_leaves_out_files_it_cannot_hold(source_e01, tmp_path, monkeypatch):
+    # Shrinks only file_organizer's exclusion rule; evidence-io's own FAT32
+    # refusal is tested in that repo.
     monkeypatch.setattr(pipeline, "FAT32_MAX_FILE", 1000)  # stands in for 4 GiB
     s = run(Options(sources=[source_e01], output_dir=str(tmp_path / "out"), images=True,
-                    export_e01=str(tmp_path / "x.E01")))
+                    export_e01=str(tmp_path / "x.E01"), filesystem="fat32"))
     rows = _manifest(s)
     small = [r for r in rows if int(r["bytes_copied"]) <= 1000]
     big = [r for r in rows if int(r["bytes_copied"]) > 1000]

@@ -11,8 +11,9 @@ from __future__ import annotations
 import argparse
 import sys
 
+from evidence_io.ewf_writer import DEFAULT_SEGMENT_SIZE
+
 from . import BRAND, TOOL_NAME, VERSION
-from .ewf_writer import DEFAULT_SEGMENT_SIZE
 
 # Exit codes per the house coding standard, matched in order (subclasses first).
 _EXIT_CODES = [
@@ -42,8 +43,8 @@ DESCRIPTION:
     manifest.csv mapping every copy to its source path and SHA-256. Same-named
     files never overwrite each other. --images and --videos replace the
     extension list with built-in sets; together they collect both. With
-    --export-e01 the sorted folder is also written as a FAT32 volume inside a
-    new E01. Inspired by Brian Carrier's sorter from The Sleuth Kit.
+    --export-e01 the sorted folder is also written as a FAT32 or exFAT volume
+    inside a new E01. Inspired by Brian Carrier's sorter from The Sleuth Kit.
     {BRAND}.
 """
 
@@ -66,6 +67,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--include-deleted", action="store_true",
                    help="E01 sources: also copy deleted files whose name entry survives")
     p.add_argument("--export-e01", metavar="PATH", help="also write the sorted files into a new E01 here")
+    p.add_argument("--filesystem", choices=["auto", "fat32", "exfat"], default="auto",
+                   help="volume inside the export E01: auto (FAT32 unless a file is 4 GiB or more or a folder "
+                        "is too large for it, then exFAT), fat32, or exfat (default auto)")
     p.add_argument("--segment-size-mib", type=int, default=DEFAULT_SEGMENT_SIZE // 1024 ** 2,
                    help=f"E01 segment size in MiB (default {DEFAULT_SEGMENT_SIZE // 1024 ** 2})")
     p.add_argument("--examiner", default="", help="examiner name for the E01 header")
@@ -91,7 +95,7 @@ def main(argv=None) -> int:
     opts = Options(
         sources=args.source, output_dir=args.output, images=args.images, videos=args.videos,
         extensions_file=args.extensions, include_deleted=args.include_deleted,
-        export_e01=args.export_e01, segment_size=args.segment_size_mib * 1024 ** 2,
+        export_e01=args.export_e01, filesystem=args.filesystem, segment_size=args.segment_size_mib * 1024 ** 2,
         examiner=args.examiner, case_number=args.case, evidence_number=args.evidence,
         notes=args.notes, overwrite=args.overwrite,
     )

@@ -3,29 +3,35 @@ folders, write a manifest, and optionally package the result as an E01.
 
 Nothing is overwritten: a second file with a name already taken in its
 extension folder is written as "name (2).ext", and the manifest maps every
-output file back to where it came from, with its SHA-256.
+output file back to where it came from, with its hashes and original times.
+run.json beside it describes the run (manifest_version, sources, options,
+counts) and names the current manifest.
 """
 
 from __future__ import annotations
 
 import csv
 import datetime as dt
+import json
 import os
 import platform
 import re
 import shutil
 import tempfile
 import time
-from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional, Set
+from dataclasses import asdict, dataclass, field
+from typing import Any, Callable, Dict, List, Optional, Set
 
+import evidence_io
 import pyewf
+import pytsk3
+from evidence_io.ewf_writer import (DEFAULT_SEGMENT_SIZE, MIN_SEGMENT_SIZE, EwfMetadata, existing_segments,
+                                    segment_stem, write_file_as_e01)
+from evidence_io.fat32 import MAX_FILE_BYTES as FAT32_MAX_FILE
+from evidence_io.volume import FILESYSTEMS, build_volume, choose_filesystem
 
 from . import TOOL_NAME, VERSION
-from .ewf_writer import (DEFAULT_SEGMENT_SIZE, MIN_SEGMENT_SIZE, EwfMetadata, existing_segments,
-                         segment_stem, write_file_as_e01)
-from .extensions import select_extensions
-from .fat32 import Fat32Builder
+from .extensions import make_selector
 from .sources import E01Source, FoundFile, walk_folder
 
 Log = Callable[[str], None]
@@ -34,7 +40,10 @@ Cancel = Callable[[], bool]
 
 LOG_NAME = "file_organization_log.txt"
 MANIFEST_NAME = "manifest.csv"
-FAT32_MAX_FILE = 4 * 1024 ** 3 - 1  # FAT32 cannot hold a file of 4 GiB or more
+RUN_NAME = "run.json"
+# Major version of the manifest.csv layout. Columns are append-only within a
+# major version, so a consumer can refuse an unknown major instead of mis-parsing.
+MANIFEST_VERSION = 1
 # UTF-16 units per name: room for a " (nnn)" suffix under FAT32's 195-unit
 # reader limit (fat32.MAX_NAME_UNITS) and NTFS's 255.
 MAX_NAME_UNITS = 170
@@ -43,7 +52,9 @@ _DEVICE_NAME = re.compile(r"^(con|prn|aux|nul|conin\$|conout\$|com[0-9¹²³]|lp
                           re.IGNORECASE)
 _FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
 MANIFEST_FIELDS = ["output_path", "status", "source_kind", "source", "path_in_source", "allocated",
-                   "size_bytes", "bytes_copied", "sha256", "modified_utc", "accessed_utc", "in_e01", "note"]
+                   "size_bytes", "bytes_copied", "sha256", "modified_utc", "accessed_utc", "in_e01", "note",
+                   # added in 1.1.0, appended so 1.0.0 readers keep working
+                   "md5", "sha1", "created_utc", "changed_utc", "fs_type", "matched_by"]
 
 
 class CancelledError(Exception):
@@ -59,6 +70,7 @@ class Options:
     extensions_file: Optional[str] = None  # None means the bundled list
     include_deleted: bool = False          # E01 sources only
     export_e01: Optional[str] = None
+    filesystem: str = "auto"               # E01 export volume: auto, fat32 or exfat
     segment_size: int = DEFAULT_SEGMENT_SIZE
     examiner: str = ""
     case_number: str = ""
@@ -77,6 +89,9 @@ class Summary:
     counts_by_ext: Dict[str, int] = field(default_factory=dict)
     manifest: str = ""
     log_file: str = ""
+    run_file: str = ""
+    filesystem: str = ""                   # the export volume actually built
+    filesystem_reason: str = ""
     e01_segments: List[str] = field(default_factory=list)
     e01_md5: str = ""
     e01_sha256: str = ""
@@ -173,6 +188,8 @@ def validate(opts: Options) -> None:
             raise FileExistsError(f"E01 export exists (use overwrite): {', '.join(clash)}")
         if opts.segment_size < MIN_SEGMENT_SIZE:
             raise ValueError(f"segment size must be at least {MIN_SEGMENT_SIZE // 1024 ** 2} MiB")
+        if opts.filesystem not in FILESYSTEMS:
+            raise ValueError(f"filesystem must be one of {', '.join(FILESYSTEMS)}")
 
 
 class _Namer:
@@ -216,10 +233,12 @@ def _claim_manifest(out_root: str) -> str:
 def run(opts: Options, log: Log = print, progress: Progress = lambda _d, _t, _s: None,
         cancel: Cancel = lambda: False) -> Summary:
     validate(opts)
-    exts, ext_origin = select_extensions(opts.images, opts.videos, opts.extensions_file)
+    sel, ext_origin = make_selector(opts.images, opts.videos, opts.extensions_file)
     out_root = os.path.abspath(opts.output_dir)
     os.makedirs(out_root, exist_ok=True)
     summary = Summary(log_file=os.path.join(out_root, LOG_NAME), manifest=_claim_manifest(out_root))
+    started = _utc(time.time())
+    inputs: List[Dict[str, Any]] = []
     # backslashreplace: a name that is not valid Unicode (an unpaired
     # surrogate on NTFS) must never stop the run halfway.
     log_fh = open(summary.log_file, "a", encoding="utf-8", errors="backslashreplace")
@@ -234,7 +253,7 @@ def run(opts: Options, log: Log = print, progress: Progress = lambda _d, _t, _s:
     namer = _Namer()
     t0 = time.time()
     try:
-        say(f"{TOOL_NAME} {VERSION}: collecting {len(exts)} extensions from the {ext_origin}")
+        say(f"{TOOL_NAME} {VERSION}: collecting {len(sel.exts)} extensions from the {ext_origin}")
         say(f"output folder {out_root}")
         for s_idx, src in enumerate(opts.sources, start=1):
             if cancel():
@@ -246,18 +265,26 @@ def run(opts: Options, log: Log = print, progress: Progress = lambda _d, _t, _s:
                     info = e01.source_info
                     say(f"media {info.media_size} bytes, {len(info.segments)} segment(s), "
                         f"stored hashes {info.stored_hashes or 'none'}")
-                    for found in e01.walk(exts, opts.include_deleted, cancel):
+                    record: Dict[str, Any] = {
+                        "kind": "e01", "path": info.path, "segments": info.segments,
+                        "media_size": info.media_size, "stored_hashes": info.stored_hashes,
+                        "stored_hashes_verified": False,  # this tool reads files, not the whole image
+                        "header_values": info.header_values, "partitions": []}
+                    inputs.append(record)
+                    for found in e01.walk(sel, opts.include_deleted, cancel):
                         _take(found, out_root, namer, rows, summary, say)
+                    record["partitions"] = [asdict(p) for p in e01.inventory]
             else:
                 say(f"scanning folder {src}")
-                for found in walk_folder(src, exts, say, cancel, skip=out_root):
+                inputs.append({"kind": "folder", "path": os.path.abspath(src)})
+                for found in walk_folder(src, sel, say, cancel, skip=out_root):
                     _take(found, out_root, namer, rows, summary, say)
             if cancel():
                 raise CancelledError()
         progress(len(opts.sources), len(opts.sources), "files copied")
 
         if opts.export_e01:
-            _mark_exportable(rows, say)
+            _mark_exportable(rows, opts.filesystem == "fat32", say)
         _write_manifest(summary.manifest, rows)
         say(f"copied {summary.files_copied} of {summary.files_found} files "
             f"({summary.bytes_copied} bytes), {summary.files_failed} failed, {summary.files_skipped} skipped "
@@ -266,30 +293,73 @@ def run(opts: Options, log: Log = print, progress: Progress = lambda _d, _t, _s:
             say(f"{ext}: {summary.counts_by_ext[ext]}")
         say(f"manifest {summary.manifest}")
 
+        def write_run() -> None:
+            summary.run_file = _write_run(out_root, opts, summary, inputs, started, ext_origin)
+
+        write_run()
         if opts.export_e01:
             try:
                 if cancel():
                     raise CancelledError()
-                _export(opts, out_root, rows, summary, say, progress, cancel)
+                _export(opts, out_root, rows, summary, say, progress, cancel, write_run)
             except BaseException:
                 # The manifest said "yes" for an E01 that was never written.
                 for row in rows:
                     if row["in_e01"] == "yes":
                         row["in_e01"] = "export not written"
                 raise
+            write_run()
         return summary
     except CancelledError:
         summary.cancelled = True
         say("cancelled; files copied so far stay in the output folder")
         _write_manifest(summary.manifest, rows)
+        summary.run_file = _write_run(out_root, opts, summary, inputs, started, ext_origin)
         return summary
     except BaseException as exc:
         # Any other failure: the copies already made keep their record.
         say(f"run stopped by an error: {type(exc).__name__}: {exc}")
         _write_manifest(summary.manifest, rows)
+        try:
+            summary.run_file = _write_run(out_root, opts, summary, inputs, started, ext_origin,
+                                          error=f"{type(exc).__name__}: {exc}")
+        except Exception:
+            pass
         raise
     finally:
         log_fh.close()
+
+
+def _write_run(out_root: str, opts: Options, summary: Summary, inputs: List[Dict[str, Any]],
+               started: str, ext_origin: str, error: str = "") -> str:
+    """run.json at the output root describes the latest run and names its
+    manifest; run-of-<manifest stem>.json keeps every run's record, since a
+    later run into the same folder replaces run.json."""
+    info = {
+        "tool": TOOL_NAME, "version": VERSION, "manifest_version": MANIFEST_VERSION,
+        "manifest": os.path.basename(summary.manifest), "log": LOG_NAME,
+        "platform": platform.platform(), "started": started, "finished": _utc(time.time()),
+        "libraries": {"evidence_io": evidence_io.VERSION, "libewf": pyewf.get_version(),
+                      "sleuthkit": pytsk3.TSK_VERSION_STR, "python": platform.python_version()},
+        "inputs": inputs,
+        "options": {k: v for k, v in asdict(opts).items() if k not in ("sources", "output_dir")},
+        "collected": ext_origin,
+        "counts": {"files_found": summary.files_found, "files_copied": summary.files_copied,
+                   "files_failed": summary.files_failed, "files_skipped": summary.files_skipped,
+                   "bytes_copied": summary.bytes_copied, "by_extension": summary.counts_by_ext},
+        "export": {"e01": summary.e01_segments, "md5": summary.e01_md5, "sha256": summary.e01_sha256,
+                   "filesystem": summary.filesystem, "filesystem_reason": summary.filesystem_reason,
+                   "files_left_out": summary.e01_excluded} if opts.export_e01 else None,
+        "cancelled": summary.cancelled, "error": error,
+        "note": "Times in manifest.csv are the originals, in UTC. File dates on the copies, and inside "
+                "any exported container, are extraction times and are not evidence attributes.",
+    }
+    stem = os.path.splitext(os.path.basename(summary.manifest))[0]
+    path = os.path.join(out_root, RUN_NAME)
+    for target in (path, os.path.join(out_root, f"run-of-{stem}.json")):
+        with open(target, "w", encoding="utf-8") as fh:
+            json.dump(info, fh, indent=2, ensure_ascii=False)
+    return path
 
 
 def _take(found: FoundFile, out_root: str, namer: _Namer, rows: List[Dict[str, object]],
@@ -300,6 +370,8 @@ def _take(found: FoundFile, out_root: str, namer: _Namer, rows: List[Dict[str, o
         "path_in_source": found.path, "allocated": found.allocated, "size_bytes": found.size,
         "bytes_copied": "", "sha256": "", "modified_utc": _utc(found.mtime),
         "accessed_utc": _utc(found.atime), "in_e01": "", "note": "",
+        "md5": "", "sha1": "", "created_utc": _utc(found.crtime), "changed_utc": _utc(found.ctime),
+        "fs_type": found.fs_type, "matched_by": found.matched_by,
     }
     rows.append(row)
     if found.realloc:
@@ -317,7 +389,7 @@ def _take(found: FoundFile, out_root: str, namer: _Namer, rows: List[Dict[str, o
         name = namer.claim(folder, base)
         dest = os.path.join(folder, name)
         try:
-            sha, copied, time_note = found.copy_to(dest)
+            hashes, time_note = found.copy_to(dest)
             break
         except FileExistsError:
             continue  # a name the namer thought free exists on disk; take the next one
@@ -341,8 +413,9 @@ def _take(found: FoundFile, out_root: str, namer: _Namer, rows: List[Dict[str, o
         summary.files_failed += 1
         say(f"error copying {found.path}: {row['note']}")
         return
+    copied = hashes.bytes
     row["output_path"] = f"{folder_name}/{name}"
-    row["sha256"], row["bytes_copied"] = sha, copied
+    row["sha256"], row["md5"], row["sha1"], row["bytes_copied"] = hashes.sha256, hashes.md5, hashes.sha1, copied
     partial = copied < found.size
     row["status"] = "copied-partial" if partial else "copied"
     if partial:
@@ -356,12 +429,14 @@ def _take(found: FoundFile, out_root: str, namer: _Namer, rows: List[Dict[str, o
     say(f"copied: {found.path} -> {dest}{' (partial)' if partial else ''}")
 
 
-def _mark_exportable(rows: List[Dict[str, object]], say: Log) -> None:
+def _mark_exportable(rows: List[Dict[str, object]], fat32_only: bool, say: Log) -> None:
+    """Every copied file goes into the E01, except that a volume forced to
+    FAT32 cannot hold a file of 4 GiB or more (auto switches to exFAT)."""
     for row in rows:
         if not row["output_path"]:
             row["in_e01"] = "no"
             continue
-        if int(row["bytes_copied"]) > FAT32_MAX_FILE:  # type: ignore[call-overload]
+        if fat32_only and int(row["bytes_copied"]) > FAT32_MAX_FILE:  # type: ignore[call-overload]
             row["in_e01"] = "no"
             row["note"] = (str(row["note"]) + "; " if row["note"] else "") + "4 GiB or larger: FAT32 cannot hold it"
             say(f"not in E01 (4 GiB or larger): {row['output_path']}")
@@ -370,24 +445,29 @@ def _mark_exportable(rows: List[Dict[str, object]], say: Log) -> None:
 
 
 def _export(opts: Options, out_root: str, rows: List[Dict[str, object]], summary: Summary,
-            say: Log, progress: Progress, cancel: Cancel) -> None:
+            say: Log, progress: Progress, cancel: Cancel, write_run: Callable[[], None]) -> None:
     assert opts.export_e01 is not None
-    say(f"building FAT32 volume for {opts.export_e01}")
-    builder = Fat32Builder(label="ORGANIZED")
+    files: List[tuple[str, str, Optional[float]]] = []
     for row in rows:
         if row["in_e01"] == "yes":
             rel = str(row["output_path"])
             full = os.path.join(out_root, *rel.split("/"))
-            builder.add_file(rel, full, mtime=os.path.getmtime(full))
+            files.append((rel, full, os.path.getmtime(full)))
         elif row["output_path"]:
             summary.e01_excluded += 1
-    for path in (summary.manifest, summary.log_file):
-        builder.add_file(os.path.basename(path), path)
+    # Exactly one manifest.csv and one run.json at the volume root, whatever
+    # this run's manifest is called in the output folder.
+    root_files = [(MANIFEST_NAME, summary.manifest, None), (RUN_NAME, os.path.join(out_root, RUN_NAME), None),
+                  (LOG_NAME, summary.log_file, None)]
+    summary.filesystem, summary.filesystem_reason = choose_filesystem(files + root_files, opts.filesystem)
+    write_run()  # so the run.json inside the volume names the filesystem
+    say(f"building {summary.filesystem} volume for {opts.export_e01} ({summary.filesystem_reason})")
     e01_dir = os.path.dirname(os.path.abspath(opts.export_e01))
     work = tempfile.mkdtemp(prefix="fo_", dir=e01_dir)
     try:
         raw = os.path.join(work, "volume.img")
-        size = builder.build(raw, lambda d, t: progress(d, t, "writing volume"))
+        size = build_volume(files + root_files, raw, summary.filesystem, label="ORGANIZED",
+                            progress=lambda d, t: progress(d, t, "writing volume")).image_bytes
         if cancel():
             raise CancelledError()
         say(f"volume image {size} bytes; writing E01")
