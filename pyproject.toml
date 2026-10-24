@@ -11,7 +11,7 @@ license = { text = "MIT" }
 requires-python = ">=3.11"
 authors = [{ name = "Lucid Truth Technologies" }]
 dependencies = [
-    "evidence-io @ git+https://github.com/LucidTruthTechnologies/evidence-io@69d424615ab1fde6c000ce3081a4f2376762eadd",
+    "evidence-io @ git+https://github.com/LucidTruthTechnologies/evidence-io@092a5b8e7514e4245d7e75e663f84dad9932ee8a",
     "libewf-python==20260924",
     "pytsk3==20260715",
 ]

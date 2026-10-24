@@ -2,11 +2,11 @@
 # Generated: 2026-10-24
 # libewf-python and pytsk3 ship win_amd64 wheels (same pins as video-frame-triage).
 
-# Pinned by full commit hash (evidence-io v1.0.1), never a tag: a tag can be
+# Pinned by full commit hash (evidence-io v1.0.2), never a tag: a tag can be
 # re-pointed by whoever controls the repo.
 # Shared E01 reader and writer, FAT32 and exFAT builders, image walker and
 # file-type detection, used by every LTT triage tool.
-evidence-io @ git+https://github.com/LucidTruthTechnologies/evidence-io@69d424615ab1fde6c000ce3081a4f2376762eadd
+evidence-io @ git+https://github.com/LucidTruthTechnologies/evidence-io@092a5b8e7514e4245d7e75e663f84dad9932ee8a
 
 # E01 reading (libewf). The wheel is built without zlib, so it cannot WRITE;
 # evidence-io's E01 writer is pure Python for that reason.
