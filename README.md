@@ -132,7 +132,7 @@ The application icon is `src/file_organizer/icon.ico`, drawn from `assets/icon.s
 
 To run from source on any platform: `pip install -e .`, then `file-organizer` or `python -m file_organizer`.
 
-E01 reading, the image walker, hashing, file-type detection and the E01, FAT32 and exFAT writers live in [evidence-io](https://github.com/LucidTruthTechnologies/evidence-io), shared with `video-frame-triage` and pinned to a release tag in `pyproject.toml` and `requirements.txt`.
+E01 reading, the image walker, hashing, file-type detection and the E01, FAT32 and exFAT writers live in [evidence-io](https://github.com/LucidTruthTechnologies/evidence-io), shared with `video-frame-triage` and pinned by full commit hash (never by tag) in `pyproject.toml` and `requirements.txt`. GitHub Actions in the build workflow are pinned by commit hash for the same reason.
 
 ## License
 
