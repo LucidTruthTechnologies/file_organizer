@@ -4,7 +4,7 @@
 
 # Shared E01 reader and writer, FAT32 and exFAT builders, image walker and
 # file-type detection, used by every LTT triage tool.
-evidence-io @ git+https://github.com/LucidTruthTechnologies/evidence-io@v1.0.0
+evidence-io @ git+https://github.com/LucidTruthTechnologies/evidence-io@v1.0.1
 
 # E01 reading (libewf). The wheel is built without zlib, so it cannot WRITE;
 # evidence-io's E01 writer is pure Python for that reason.
