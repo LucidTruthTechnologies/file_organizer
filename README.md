@@ -80,6 +80,8 @@ Lines starting with `#` are headers, text in parentheses is a comment, several e
 
 `--images` and `--videos` replace the list with built-in sets. The image set covers common photo, phone, editor and vector formats plus camera raw (`.cr2`, `.nef`, `.arw`, `.dng` and others). The video set is the same one `video-frame-triage` uses (`.mp4`, `.mov`, `.avi`, `.mkv`, `.wmv`, `.3gp`, `.ts` and others). Matching is by extension, without regard to case. With `--videos`, a video that was renamed to hide it (`holiday.dat`) is also found by its container signature; its manifest row says `matched_by` is `magic`. Both sets come from the shared `evidence-io` library, so every LTT tool agrees on what counts as an image or a video.
 
+**Correction in 1.1.1 (2026-11-15).** With "include deleted files" on, earlier versions skipped every deleted file on an NTFS volume in an E01 without reporting it. The Sleuth Kit lists a deleted NTFS name without its metadata, because freeing an MFT record raises the record's sequence number. 1.1.1 is built on evidence-io 1.0.4, which opens the record by its address and accepts it when it is unallocated and its sequence is the name's or one more. Deleted files whose folder is gone are now collected under `$OrphanFiles/`. FAT, exFAT and folder sources are unaffected, and so is any run with deleted files off. Re-run 1.1.1 on an NTFS E01 when its deleted files matter.
+
 ## Output
 
 ```text
